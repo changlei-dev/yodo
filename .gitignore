@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime data (generated)
+data/raw/
+data/processed/
+data/kb/index.faiss
+data/eval/
+reports/
+*.log
+
+# Env
+.env

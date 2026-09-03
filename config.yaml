@@ -1,0 +1,47 @@
+# ============================================================
+# iPinYou RTB -> Yodo1 广告业务 JD 全流程 Demo 配置
+# Side-Project: 仅本地 Mock 运行，不调用真实 DSP API
+# ============================================================
+
+data:
+  seed: 20260903          # 数据生成随机种子（可复现）
+  days: 7                 # 模拟日志覆盖天数
+  fault_mode: full        # full=注入全部教学故障, none=纯健康数据, outage_only 等见 generator.PROFILE
+
+quality:                  # 阶段1：数据质量校验规则阈值
+  price_tolerance: 0      # PayingPrice>BiddingPrice 允许误差(分)
+  missing_parent_hard_ratio: 0.005   # 孤儿事件(有曝光无出价)硬错误比例
+  orphan_bid_alert_ratio: 0.85       # 有出价无曝光占比绝对告警线；跨窗口跳变(delta)另设，避免竞价成功率差异导致误报
+  outlier_robust_z: 5.0              # 单广告单元日内离群 robust-z
+  cross_unit_robust_z: 6.0           # 跨广告单元离群 robust-z
+  max_samples: 5                     # 每个 issue 最多返回的样例数
+
+kb:                       # 阶段2：故障案例知识库
+  top_k: 3
+  embedding: offline      # offline=本地n-gram向量(无需key) | qwen=调用Qwen Embedding API
+  dir: data/kb
+
+llm:                      # 阶段3：Qwen 推理（OpenAI-compatible / DashScope）
+  model: qwen3.7-max-2026-06-08
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key_env: QWEN_API_KEY
+  temperature: 0.1
+  timeout: 90
+
+agent:
+  mode: auto              # auto=有key用LLM否则Mock | llm | mock
+  max_steps: 10
+  report_dir: reports
+
+inspection:               # 阶段4：定时巡检工作流
+  hours_window: 24
+  spend_drop_flag: -0.5
+  imp_drop_flag: -0.5
+  ctr_surge_flag: 2.0
+  ctr_drop_flag: -0.5
+  watch_interval_sec: 3600
+
+eval:                     # 阶段5：评测闭环
+  llm_judge: false        # true 且配置key时用LLM复核建议合理性
+  report_dir: reports
+  cases_dir: data/eval
