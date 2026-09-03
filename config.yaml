@@ -22,7 +22,7 @@ kb:                       # 阶段2：故障案例知识库
   dir: data/kb
 
 llm:                      # 阶段3：Qwen 推理（OpenAI-compatible / DashScope）
-  model: qwen3.7-max-2026-06-08
+  model: glm-5.2
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   api_key_env: QWEN_API_KEY
   temperature: 0.1

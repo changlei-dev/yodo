@@ -219,8 +219,12 @@ def run_data_quality_check(campaign_id: int, window_hours: Optional[int] = None,
     }
 
 
-def search_knowledge_base(query: str, top_k: int = 3) -> dict:
-    """检索历史故障案例 / 行业排查经验知识库。"""
+def search_knowledge_base(query: str, top_k: int = 3, campaign_id: int | None = None) -> dict:
+    """检索历史故障案例 / 行业排查经验知识库。
+
+    campaign_id is accepted only for interface uniformity with the other tools and is ignored
+    (KB retrieval is symptom-text based).
+    """
     hits = _kb().search(query, top_k=max(1, int(top_k)))
     return {"query": query, "hits": hits, "total_docs": _kb().count()}
 

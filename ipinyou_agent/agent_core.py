@@ -408,7 +408,12 @@ class LLMPlanner(Planner):
                 tool = obj.get("tool")
                 if tool in T.TOOL_SCHEMA:
                     args = obj.get("args") or {}
-                    args.setdefault("campaign_id", state.campaign_ids[0] if state.campaign_ids else 0)
+                    # Only inject a default campaign_id for tools whose schema declares it;
+                    # injecting it into every tool (e.g. search_knowledge_base) made the LLM
+                    # loop forever on "unexpected keyword argument" tool errors.
+                    if ("campaign_id" in T.TOOL_SCHEMA[tool].get("params", {})
+                            and "campaign_id" not in args and state.campaign_ids):
+                        args["campaign_id"] = state.campaign_ids[0]
                     return {"action": "tool", "tool": tool, "args": args}
             if obj and obj.get("action") == "final" and obj.get("report"):
                 report = normalize_report(obj["report"], state)
@@ -716,19 +721,12 @@ def _run_loop(planner: Planner, state: AgentState, max_steps: int) -> dict:
         transcript.append(step)
         tool_calls += 1
     if not report:
-        decision = {"tag": "no_anomaly", "reason": "did not converge within the step budget",
-                    "confidence": 0.4}
-        m = {}
-        for s_ in reversed(transcript):
-            if s_["tool"] == "get_campaign_metrics":
-                m = s_["result"]
-        dq = {}
-        for s_ in reversed(transcript):
-            if s_["tool"] == "run_data_quality_check":
-                dq = s_["result"]
-        report = build_mock_report(state.query, state.campaign_ids, decision,
-                                   metrics=m, dq=dq, events=None, kb=None,
-                                   kb_store=planner.kb)
+        # Step budget exhausted without an explicit final report. Do NOT hard-code a
+        # no_anomaly verdict here - run the deterministic rule-based diagnosis over the
+        # evidence already collected so an obvious anomaly (e.g. -82% delivery) still
+        # gets the correct root cause even after a misbehaving LLM loop.
+        report = _mock_final_from_transcript(state.query, state.campaign_ids, transcript,
+                                             kb_store=planner.kb)
     return {"transcript": transcript, "tool_calls": tool_calls, "report": report}
 
 
