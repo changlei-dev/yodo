@@ -22,7 +22,7 @@ from . import tools as T
 from . import warehouse as W
 from .agent_core import DiagnosisResult, _decide_tag, report_to_markdown, run_diagnosis
 
-RISK_LEVELS = {"high": "高风险", "medium": "中风险", "low": "低风险"}
+RISK_LEVELS = {"high": "High", "medium": "Medium", "low": "Low"}
 
 
 def risk_of(metrics: dict, dq: dict) -> tuple[str, str]:
@@ -61,7 +61,7 @@ def scan_all(cfg: dict | None = None) -> list[dict]:
         rows.append({
             "ad_id": ad_id,
             "risk": level,
-            "risk_cn": RISK_LEVELS[level],
+            "risk_label": RISK_LEVELS[level],
             "tag": tag,
             "cur_imps": cur.get("imps", 0), "cur_spend": cur.get("spend_cents", 0),
             "cur_clks": cur.get("clks", 0), "cur_convs": cur.get("convs", 0),
@@ -71,7 +71,7 @@ def scan_all(cfg: dict | None = None) -> list[dict]:
             "d_bid": pct.get("avg_bid"),
             "dq_count": len(issues),
             "dq_critical": sum(1 for i in issues if i["severity"] == "critical"),
-            "dq_names": "、".join({i["name"] for i in issues}),
+            "dq_names": ", ".join({i["name"] for i in issues}),
             "recommend": _auto_recommend(tag, issues),
         })
     rows.sort(key=lambda r: (r["risk"] != "high", r["risk"] != "medium", r["ad_id"]))
@@ -80,17 +80,18 @@ def scan_all(cfg: dict | None = None) -> list[dict]:
 
 def _auto_recommend(tag: str, issues: list) -> str:
     map_ = {
-        "delivery_outage": "核对素材审核状态 / 渠道与定向配置，必要时联系平台侧",
-        "imp_dataloss": "核查上报链路与补数，看缺口时段 access 日志",
-        "price_anomaly": "对账排查扣费>出价记录，确认计费模式",
-        "conv_clock_anomaly": "校准 SDK/服务端时间，重算归因窗口",
-        "ctr_stat_outlier": "接反作弊过滤，核查点击来源聚集度",
-        "bid_drop": "检查自动出价/oCPX 系数与目标出价",
-        "no_anomaly": "保持观察，关注下个周期",
+        "delivery_outage": "Check creative review status / channel & targeting config; contact the "
+                           "platform side if needed",
+        "imp_dataloss": "Review the reporting pipeline and backfill; check access logs for the gap window",
+        "price_anomaly": "Reconcile overbilling records and confirm the billing mode",
+        "conv_clock_anomaly": "Calibrate SDK/server time and recompute attribution windows",
+        "ctr_stat_outlier": "Enable anti-fraud filtering and check click-source clustering",
+        "bid_drop": "Check auto-bid / oCPX coefficients and target bid",
+        "no_anomaly": "Keep watching and review next cycle",
     }
     if tag == "no_anomaly" and issues:
-        return "质量存在轻微告警，建议数据链路复核后再评估波动"
-    return map_.get(tag, "结合指标复核口径")
+        return "Minor quality warnings exist; re-check the data pipeline before evaluating the fluctuation"
+    return map_.get(tag, "Re-check metrics and definitions")
 
 
 def _fmt_pct(v) -> str:
@@ -104,34 +105,34 @@ def inspection_report_md(rows: list[dict], cfg: dict | None = None) -> str:
     high = [r for r in rows if r["risk"] == "high"]
     med = [r for r in rows if r["risk"] == "medium"]
     lines = [
-        f"# 广告单元定时巡检报告",
+        f"# Campaign Inspection Report",
         "",
-        f"- 巡检时间: {now.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 覆盖广告单元: {len(rows)} 个",
-        f"- 高风险: {len(high)} | 中风险: {len(med)} | 低风险: {len(rows) - len(high) - len(med)}",
+        f"- Inspected at: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- Campaigns covered: {len(rows)}",
+        f"- High risk: {len(high)} | Medium risk: {len(med)} | Low risk: {len(rows) - len(high) - len(med)}",
         "",
-        "## 一、风险概览",
+        "## 1. Risk Overview",
         "",
-        "| 风险 | AdID | 根因标签 | 当前24h imps/spend/clks/convs | "
-        "Δimps | Δspend | Δctr | Δconv | Δ均价 | DQ告警 | 建议 |",
+        "| Risk | AdID | Root-cause tag | Last-24h imps/spend/clks/convs | "
+        "dImps | dSpend | dCtr | dConv | dBid | DQ issues | Recommendation |",
         "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
-            f"| {r['risk_cn']} | {r['ad_id']} | {r['tag']} | "
+            f"| {r['risk_label']} | {r['ad_id']} | {r['tag']} | "
             f"{r['cur_imps']:,}/{r['cur_spend']:,}/{r['cur_clks']}/{r['cur_convs']} | "
             f"{_fmt_pct(r['d_imps'])} | {_fmt_pct(r['d_spend'])} | {_fmt_pct(r['d_ctr'])} | "
             f"{_fmt_pct(r['d_conv'])} | {_fmt_pct(r['d_bid'])} | "
-            f"{r['dq_count']}(危{r['dq_critical']}) | {r['recommend']} |")
-    lines += ["", "## 二、重点关注（高/中风险明细）", ""]
+            f"{r['dq_count']}(crit {r['dq_critical']}) | {r['recommend']} |")
+    lines += ["", "## 2. Key Focus (high/medium risk details)", ""]
     flagged = [r for r in rows if r["risk"] in ("high", "medium")]
     if not flagged:
-        lines.append("> 本次未发现需要立即处理的广告单元。")
+        lines.append("> No campaigns need immediate attention in this round.")
     for r in flagged:
-        lines.append(f"### AdID {r['ad_id']}  [{r['risk_cn']}]")
-        lines.append(f"- 根因标签: {r['tag']}")
-        lines.append(f"- 质量告警: {r['dq_names'] or '无'}")
-        lines.append(f"- 建议: {r['recommend']}")
+        lines.append(f"### AdID {r['ad_id']}  [{r['risk_label']}]")
+        lines.append(f"- Root-cause tag: {r['tag']}")
+        lines.append(f"- Quality warnings: {r['dq_names'] or 'none'}")
+        lines.append(f"- Recommendation: {r['recommend']}")
         lines.append("")
     return "\n".join(lines)
 

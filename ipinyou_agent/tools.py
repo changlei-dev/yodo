@@ -141,7 +141,7 @@ def get_campaign_events(campaign_id: int, start_time: Optional[str] = None,
     ev = W.events_of_campaign(campaign_id)
     if ev.empty:
         return {"campaign_id": campaign_id, "exists": False, "total_events": 0,
-                "note": "该广告单元在仓库中不存在或该时间窗内无数据"}
+                "note": "campaign not found in the warehouse or no data in this window"}
 
     ts = pd.to_datetime(ev["timestamp"])
     if start_time:
@@ -150,7 +150,7 @@ def get_campaign_events(campaign_id: int, start_time: Optional[str] = None,
         ev = ev[ts <= pd.to_datetime(end_time)]
     if ev.empty:
         return {"campaign_id": campaign_id, "exists": True, "total_events": 0,
-                "note": "时间窗内无事件"}
+                "note": "no events in the given window"}
 
     counts = ev["LogType"].value_counts().sort_index().to_dict()
     bid_ids = set(ev.loc[ev["LogType"] == 0, "BidID"])
@@ -178,7 +178,7 @@ def get_campaign_events(campaign_id: int, start_time: Optional[str] = None,
         "counts": {f"logtype_{k}": int(v) for k, v in counts.items()},
         "events_without_parent_bid": orphan,
         "samples": samples,
-        "note": "生产环境体量巨大，此处仅抽样返回少量原始事件作为凭证",
+        "note": "production data is huge; only a small sample is returned as evidence",
     }
 
 
@@ -198,13 +198,14 @@ def run_data_quality_check(campaign_id: int, window_hours: Optional[int] = None,
         try:
             _kb().add_doc({
                 "doc_id": f"snap-{report['run_id']}",
-                "title": f"数据质量快照 AdID={campaign_id} {report['run_id']}",
+                "title": f"Data-quality snapshot AdID={campaign_id} {report['run_id']}",
                 "symptom": report["summary"],
                 "root_cause_tag": "no_anomaly",
-                "root_cause": "待Agent结合指标判断",
+                "root_cause": "to be judged by the agent together with the metrics",
                 "evidence": Q.snapshot_text(report),
-                "actions": ["结合指标趋势判断是否为真实业务事件", "如为链路问题提单修复"],
-                "tags": ["数据质量", "快照"], "source": "quality-snapshot",
+                "actions": ["Combine with metric trends to judge whether it is a real business event",
+                            "Raise a ticket to fix if it looks like a pipeline issue"],
+                "tags": ["data quality", "snapshot"], "source": "quality-snapshot",
             })
         except Exception:
             pass
@@ -230,27 +231,30 @@ def search_knowledge_base(query: str, top_k: int = 3) -> dict:
 
 TOOL_SCHEMA = {
     "get_campaign_metrics": {
-        "description": "获取某广告单元(AdID)聚合指标。返回当前24h/前一24h总量、变化率(pct_change_24h)、"
-                       "及逐小时序列(buckets)；字段 imps曝光 clks点击 convs转化 bids竞价 spend_cents消耗 avg_bid均价 ctr cpc。"
-                       "发现消耗/曝光骤变时先调用它确认变化幅度。",
-        "params": {"campaign_id": "int", "granularity": "str(hourly|daily, 默认hourly)",
-                   "window_hours": "int(默认48)"},
+        "description": "Get aggregated metrics for a campaign (AdID): current 24h vs previous 24h totals, "
+                       "pct_change_24h, and hourly buckets. Fields: imps, clks, convs, bids, spend_cents, "
+                       "avg_bid, ctr, cpc. Call it first when spend/impressions change abruptly.",
+        "params": {"campaign_id": "int", "granularity": "str(hourly|daily, default hourly)",
+                   "window_hours": "int(default 48)"},
     },
     "get_campaign_events": {
-        "description": "获取某广告单元在时间窗内的 event-level 原始事件(抽样)：返回各 LogType(0出价1曝光2点击3转化)数量、"
-                       "无出价父记录的孤儿事件数及少量样例。用于核实指标背后的明细是否可信。",
-        "params": {"campaign_id": "int", "start_time": "str(可选)",
-                   "end_time": "str(可选)"},
+        "description": "Get sampled event-level raw logs for a campaign in a time window: counts per LogType "
+                       "(0 bid / 1 impression / 2 click / 3 conversion), orphan events without a parent bid, "
+                       "and a few sample rows. Use it to verify whether the detail behind the metrics is credible.",
+        "params": {"campaign_id": "int", "start_time": "str(optional)",
+                   "end_time": "str(optional)"},
     },
     "run_data_quality_check": {
-        "description": "对该广告单元运行数据质量校验(主键完整性/价格合理性/时间一致性/统计离群)，返回 issues 告警数组，"
-                       "rule_id 取值 R1孤儿/R1b有出价无曝光/R2扣费超价/R3时间倒挂/R4统计离群。",
-        "params": {"campaign_id": "int", "window_hours": "int(可选)"},
+        "description": "Run the data-quality checks for a campaign (primary-key integrity / price sanity / "
+                       "time consistency / statistical outliers) and return an issues array; rule_id values: "
+                       "R1 orphan / R1b bid-without-impression / R2 overbilling / R3 time reversal / R4 outlier.",
+        "params": {"campaign_id": "int", "window_hours": "int(optional)"},
     },
     "search_knowledge_base": {
-        "description": "检索故障案例知识库，输入症状描述(如'出价正常但无曝光 消耗暴跌')，返回最相关的历史根因与处置建议。"
-                       "在需要给出业务根因和修复建议前调用。",
-        "params": {"query": "str", "top_k": "int(默认3)"},
+        "description": "Search the troubleshooting knowledge base with a symptom description "
+                       "(e.g. 'normal bidding but no impressions, spend collapse') and get the most relevant "
+                       "historical root causes and action plans. Call it before finalizing root causes/advice.",
+        "params": {"query": "str", "top_k": "int(default 3)"},
     },
 }
 
@@ -268,7 +272,7 @@ def call_tool(name: str, args: dict) -> dict:
           "run_data_quality_check": run_data_quality_check,
           "search_knowledge_base": search_knowledge_base}.get(name)
     if fn is None:
-        return {"error": f"未知工具: {name}"}
+        return {"error": f"unknown tool: {name}"}
     kwargs = dict(args or {})
     for k in list(kwargs):
         if k in INT_PARAMS:
@@ -280,4 +284,4 @@ def call_tool(name: str, args: dict) -> dict:
         result = fn(**kwargs)
         return result if isinstance(result, dict) else {"result": result}
     except Exception as e:  # 工具异常不中断 Agent
-        return {"error": f"{name} 执行失败: {e!r}", "campaign_id": kwargs.get("campaign_id")}
+        return {"error": f"{name} failed: {e!r}", "campaign_id": kwargs.get("campaign_id")}

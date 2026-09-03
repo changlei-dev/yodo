@@ -80,11 +80,12 @@ def run_quality_checks(
         sev = "critical" if ratio > float(qcfg.get("missing_parent_hard_ratio", 0.005)) else "warning"
         issues.append({
             "rule_id": "R1",
-            "name": "主键完整性-孤儿事件",
+            "name": "primary-key integrity - orphan events",
             "severity": sev,
-            "message": f"检测到 {orphan_imps} 条曝光 / {orphan_clks} 条点击 / "
-                       f"{orphan_convs} 条转化没有对应的出价记录(BidID 在出价源中不存在)，"
-                       f"疑似上游丢包或多源 join 失败。",
+            "message": f"Found {orphan_imps} impressions / {orphan_clks} clicks / "
+                       f"{orphan_convs} conversions without a matching bid record "
+                       f"(BidID does not exist in the bid source); "
+                       f"likely upstream log loss or multi-source join failure.",
             "detail": {"orphan_imp": orphan_imps, "orphan_clk": orphan_clks,
                        "orphan_conv": orphan_convs, "imp_total": imp_total,
                        "ratio": round(ratio, 4)},
@@ -99,10 +100,11 @@ def run_quality_checks(
     if r_last24 > float(qcfg.get("orphan_bid_alert_ratio", 0.85)) or delta > 0.12:
         issues.append({
             "rule_id": "R1b",
-            "name": "主键完整性-有出价无曝光",
+            "name": "primary-key integrity - bid without impression",
             "severity": "warning",
-            "message": f"最近24小时出价后无曝光占比 {r_last24:.1%}，较前一24h "
-                       f"({r_prev24:.1%}) 变化 {delta:+.1%}，存在曝光上报/投放服务中断风险。",
+            "message": f"In the last 24h, {r_last24:.1%} of bids had no impression, "
+                       f"changing {delta:+.1%} vs the previous 24h ({r_prev24:.1%}); "
+                       f"possible impression-reporting or delivery outage.",
             "detail": {"ratio_last24h": round(r_last24, 4),
                        "ratio_prev24h": round(r_prev24, 4),
                        "delta": round(delta, 4)},
@@ -117,10 +119,10 @@ def run_quality_checks(
     if len(bad_price):
         issues.append({
             "rule_id": "R2",
-            "name": "业务合理性-PayingPrice>BiddingPrice",
+            "name": "business logic - PayingPrice > BiddingPrice",
             "severity": "critical",
-            "message": f"{len(bad_price)} 条曝光的实际扣费高于出价"
-                       f"(PayingPrice>BiddingPrice)，可能存在计费异常或返点/加价规则 bug。",
+            "message": f"{len(bad_price)} impressions billed above the bid price "
+                       f"(PayingPrice > BiddingPrice); possible billing anomaly or rebate/surcharge bug.",
             "detail": {"count": int(len(bad_price)),
                        "max_gap": int(bad_price["PayingPrice"].max() - bad_price["BiddingPrice"].max())},
             "samples": _samples(ev, bad_price["BidID"].head(3)),
@@ -134,7 +136,8 @@ def run_quality_checks(
                 "rule_id": "R3",
                 "name": name,
                 "severity": "warning" if count < 50 else "critical",
-                "message": f"{count} 条 {name} 时间早于其曝光时间，疑似客户端时钟/回传时间戳 bug。",
+                "message": f"{count} rows of {name} are timestamped earlier than their impressions; "
+                           f"likely client clock / callback timestamp bug.",
                 "detail": {"count": count},
                 "samples": sids[: int(qcfg.get("max_samples", 5))],
             })
@@ -144,10 +147,11 @@ def run_quality_checks(
     if outlier_units:
         issues.append({
             "rule_id": "R4",
-            "name": "统计异常-广告单元指标离群",
+            "name": "statistical outlier - campaign metric outlier",
             "severity": "warning",
-            "message": f"{len(outlier_units)} 个广告单元日内聚合指标出现统计离群"
-                       f"(robust-z>{qcfg.get('outlier_robust_z', 5)})，需关注 CTR 异常流量/CPC 成本失控。",
+            "message": f"{len(outlier_units)} campaign(s) show daily aggregated metrics as statistical outliers "
+                       f"(robust-z>{qcfg.get('outlier_robust_z', 5)}); watch for abnormal-traffic CTR or "
+                       f"runaway CPC.",
             "detail": {"units": outlier_units},
             "samples": [],
         })
@@ -170,7 +174,7 @@ def run_quality_checks(
 
 def _empty_report(ad_id) -> dict:
     return {
-        "run_id": "dq_empty", "scope": {"ad_id": ad_id, "note": "scope 内无数据"},
+        "run_id": "dq_empty", "scope": {"ad_id": ad_id, "note": "no data in scope"},
         "summary": "no data", "issues": [], "totals": {"bids": 0, "imps": 0, "clks": 0, "convs": 0},
     }
 
@@ -189,13 +193,13 @@ def _bid_no_imp_ratio(frame: pd.DataFrame, win: pd.Timedelta, end_ts: pd.Timesta
 def _time_reversal_issues(ev: pd.DataFrame):
     imp_t = ev.loc[ev["LogType"] == 1, ["BidID", "timestamp"]].set_index("BidID")["timestamp"]
     out = []
-    for lt, name in ((2, "点击"), (3, "转化")):
+    for lt, name in ((2, "click"), (3, "conversion")):
         sub = ev[ev["LogType"] == lt]
         if sub.empty:
             continue
         merged = sub.set_index("BidID")["timestamp"].to_frame("t_child").join(imp_t, how="inner")
         bad = merged[merged["t_child"] < merged["timestamp"]]
-        out.append((f"时间一致性-{name}早于曝光", int(len(bad)),
+        out.append((f"time consistency - {name} earlier than impression", int(len(bad)),
                     [{"bid": k, "child_ts": _fmt_dt(v["t_child"]),
                       "imp_ts": _fmt_dt(v["timestamp"])} for k, v in bad.head(3).iterrows()]))
     return out
@@ -257,10 +261,10 @@ def _samples(ev: pd.DataFrame, bid_ids) -> list:
 
 def _summarize(issues: list) -> str:
     if not issues:
-        return "未发现异常：主键、价格、时间、统计指标均通过校验。"
+        return "No anomalies detected: primary-key, price, time-consistency and statistical checks all passed."
     sev = sorted({x["severity"] for x in issues}, key=ISSUE_STATUS.index)
-    names = "、".join(x["name"] for x in issues)
-    return f"发现 {len(issues)} 类问题(最高级别:{sev[0]})：{names}。"
+    names = ", ".join(x["name"] for x in issues)
+    return f"Found {len(issues)} issue type(s), highest severity: {sev[0]}: {names}."
 
 
 # ---------------------------------------------------------------------------
@@ -268,29 +272,29 @@ def _summarize(issues: list) -> str:
 # ---------------------------------------------------------------------------
 
 def quality_to_markdown(report: dict) -> str:
-    lines = [f"## 数据质量报告 {report['run_id']}",
-             f"- 范围: {report['scope']}",
-             f"- 结论: {report['summary']}",
-             f"- 总量: {report['totals']}", ""]
+    lines = [f"## Data Quality Report {report['run_id']}",
+             f"- Scope: {report['scope']}",
+             f"- Summary: {report['summary']}",
+             f"- Totals: {report['totals']}", ""]
     if not report["issues"]:
-        lines.append("✅ 全部规则通过")
+        lines.append("All rules passed.")
         return "\n".join(lines)
-    lines.append("| 规则 | 级别 | 问题 |")
+    lines.append("| Rule | Severity | Issue |")
     lines.append("|---|---|---|")
     for it in report["issues"]:
         lines.append(f"| {it['rule_id']} {it['name']} | {it['severity']} | {it['message']} |")
     lines.append("")
-    lines.append("### 样例")
+    lines.append("### Samples")
     for it in report["issues"]:
         if it.get("samples"):
-            lines.append(f"**{it['name']}** 样例: {json.dumps(it['samples'], ensure_ascii=False, default=str)}")
+            lines.append(f"**{it['name']}** samples: {json.dumps(it['samples'], ensure_ascii=False, default=str)}")
     return "\n".join(lines)
 
 
 def snapshot_text(report: dict) -> str:
     """把质量报告转成可供知识库检索的文本片段。"""
-    txt = (f"[数据质量报告] 范围={report['scope']} 结论={report['summary']} "
-           f"总量={report['totals']} 问题数={len(report['issues'])}")
+    txt = (f"[data-quality report] scope={report['scope']} summary={report['summary']} "
+           f"totals={report['totals']} issue_count={len(report['issues'])}")
     for it in report["issues"]:
         txt += f" | {it['name']}({it['severity']}):{it['message']}"
     return txt

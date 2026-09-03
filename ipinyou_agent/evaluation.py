@@ -41,108 +41,122 @@ class EvalCase:
 CASE_LIB: dict[str, dict] = {
     "delivery_outage": dict(
         gt_tags=["delivery_outage"],
-        gt_action_kw=["素材", "审核", "渠道", "定向", "竞价"],
+        gt_action_kw=["creative", "review", "channel", "targeting", "bid", "delivery"],
         minimal_tools=["get_campaign_metrics", "run_data_quality_check",
                        "get_campaign_events", "search_knowledge_base"],
         difficulty="hard",
         queries=[
-            "广告单元 AdID:2345 最近24小时消耗暴跌，但是出价没有调低，请排查原因，给出修复建议",
-            "广告单元 2345 这两天曝光和消耗几乎归零，点击转化也没了，竞价日志还正常，帮我定位并给修复建议",
-            "AdID 2345 消耗骤降 85%，出价没动，怀疑是素材或者渠道出了问题，帮我核实并给出排查建议",
+            "Campaign AdID:2345 spend collapsed in the last 24h while the bid was not lowered; "
+            "find the root cause and give fixes",
+            "Campaign 2345 impressions and spend nearly hit zero in the past two days, "
+            "clicks/conversions gone, but bid logs look normal; help locate and advise",
+            "AdID 2345 spend dropped 85% with no bid change; suspect a creative or channel issue; "
+            "verify and give troubleshooting advice",
         ],
-        note="真实业务case：出价正常但服务中断（模拟素材拒审/渠道故障）"),
+        note="real incident: normal bidding but delivery outage (simulated creative rejection / "
+             "channel failure)"),
     "conv_clock_anomaly": dict(
         gt_tags=["conv_clock_anomaly"],
-        gt_action_kw=["时间", "归因", "时钟", "SDK", "校准", "重算", "倒挂"],
+        gt_action_kw=["timestamp", "attribution", "clock", "sdk", "calibrat", "recomput", "reversal"],
         minimal_tools=["get_campaign_metrics", "run_data_quality_check",
                        "search_knowledge_base"],
         difficulty="medium",
         queries=[
-            "广告单元 1002 最近24小时转化数下滑明显，但点击和曝光都正常，请排查原因",
-            "AdID 1002 转化记录时间看起来不太对，帮我检查数据质量并给建议",
-            "单元1002点击没少转化少了一截，怀疑归因或者上报时间出问题，帮我分析下",
+            "Campaign 1002 conversions dropped sharply in the last 24h while clicks and impressions "
+            "look normal; investigate the cause",
+            "AdID 1002 conversion timestamps look wrong; check the data quality and advise",
+            "Unit 1002 clicks are fine but conversions dropped; suspect attribution or reporting-time "
+            "problems; analyze it",
         ],
-        note="注入故障：转化时间戳被拨回1天（时间倒挂，R3）"),
+        note="injected fault: conversion timestamps rolled back ~1 day (time reversal, R3)"),
     "price_anomaly": dict(
         gt_tags=["price_anomaly"],
-        gt_action_kw=["扣费", "计费", "对账", "出价", "补偿", "模式"],
+        gt_action_kw=["billing", "reconcil", "bid", "compensat", "mode", "overcharg"],
         minimal_tools=["get_campaign_metrics", "run_data_quality_check",
                        "search_knowledge_base"],
         difficulty="easy",
         queries=[
-            "广告单元 1003 部分曝光实际扣费(PayingPrice)高于出价，请核查并给出处理建议",
-            "AdID 1003 对账发现成本偏高，怀疑计费有异常，帮我查数据并给建议",
-            "单元1003扣费比出价还高的记录有不少，是什么原因，怎么处理？",
+            "Some impressions of campaign 1003 billed above the bid (PayingPrice > BiddingPrice); "
+            "investigate and advise",
+            "AdID 1003 reconciliation shows unusually high cost; suspect a billing anomaly; "
+            "check the data and advise",
+            "Unit 1003 has many rows billed higher than the bid; what is the cause and how to handle it?",
         ],
-        note="注入故障：PayingPrice>BiddingPrice（R2）"),
+        note="injected fault: PayingPrice > BiddingPrice (R2)"),
     "imp_dataloss": dict(
         gt_tags=["imp_dataloss"],
-        gt_action_kw=["丢包", "日志", "上报", "补数", "缺口", "通道", "重报"],
+        gt_action_kw=["log", "reporting", "backfill", "gap", "pipeline", "access", "recompute"],
         minimal_tools=["get_campaign_metrics", "run_data_quality_check",
                        "get_campaign_events", "search_knowledge_base"],
         difficulty="hard",
         queries=[
-            "广告单元 1004 最近一天有个时段消耗/曝光出现缺口，后来又恢复了，怀疑数据上报丢了，帮我定位根因",
-            "AdID 1004 某个时段曝光莫名少了三成又自己恢复，出价正常，帮我判断是不是日志丢包",
-            "单元1004的消耗曲线有豁口，怀疑上报链路问题，给个排查结论和方案",
+            "Campaign 1004 had a spend/impression gap for some hours yesterday, then recovered; "
+            "suspect data-reporting loss; locate the root cause",
+            "AdID 1004 impressions were mysteriously ~30% lower for a few hours and recovered by "
+            "themselves; bid normal; judge whether it is log loss",
+            "Unit 1004 spend curve has a gap; suspect the reporting pipeline; give a conclusion and a plan",
         ],
-        note="注入故障：随机丢30%曝光日志后恢复"),
+        note="injected fault: random 30% impression-log loss that later recovered"),
     "ctr_stat_outlier": dict(
         gt_tags=["ctr_stat_outlier"],
-        gt_action_kw=["反作弊", "无效流量", "点击", "素材", "A/B", "离群", "流量"],
+        gt_action_kw=["anti-fraud", "invalid traffic", "click", "a/b", "outlier", "traffic",
+                      "fingerprint"],
         minimal_tools=["get_campaign_metrics", "run_data_quality_check",
                        "search_knowledge_base"],
         difficulty="medium",
         queries=[
-            "广告单元 1005 今天CTR冲到平时的近三倍，曝光量也不大，帮我判断是真实提升还是异常流量并给出建议",
-            "AdID 1005 有几个小时CTR异常冲高，帮我分析数据质量与点击来源",
-            "单元1005点击率离群，曝光少点击多，怀疑有刷量，帮我核实怎么处理",
+            "Campaign 1005 CTR jumped to nearly 3x normal today with low impression volume; judge "
+            "whether it is a real lift or invalid traffic, and advise",
+            "AdID 1005 had abnormal CTR spikes in a few hours; analyze data quality and click sources",
+            "Unit 1005 click rate is an outlier: few impressions but many clicks; suspected click "
+            "fraud; verify and advise",
         ],
-        note="注入故障：小时级 CTR 突刺 + 全天 CTR 抬升(R4统计离群)"),
+        note="injected fault: hourly CTR spikes + all-day CTR lift (R4 statistical outlier)"),
     "bid_drop": dict(
         gt_tags=["bid_drop"],
-        gt_action_kw=["出价", "自动出价", "oCPX", "成本", "竞价", "恢复"],
+        gt_action_kw=["auto-bid", "bid", "ocpx", "cost", "restore", "coefficient", "win rate"],
         minimal_tools=["get_campaign_metrics", "run_data_quality_check",
                        "search_knowledge_base"],
         difficulty="easy",
         queries=[
-            "广告单元 1006 从昨晚开始消耗一路往下走，帮我看看是不是出价策略变了",
-            "AdID 1006 消耗下降的同时平均出价好像也低了，帮我确认根因和建议",
-            "单元1006量级收缩，怀疑自动出价调低了，怎么恢复？",
+            "Campaign 1006 spend has been declining since last night; check whether the bid strategy changed",
+            "AdID 1006 spend is falling and the average bid looks lower too; confirm the root cause and advise",
+            "Unit 1006 volume shrank; suspect the auto-bid was lowered; how to recover it?",
         ],
-        note="注入故障：最近12h 出价下调55%"),
+        note="injected fault: bid lowered ~55% in the last 12h"),
     "healthy": dict(
         gt_tags=["no_anomaly"],
-        gt_action_kw=["复核", "对比", "观察", "无需处理", "正常波动"],
+        gt_action_kw=["watch", "normal", "fluctuation", "compare", "no action"],
         minimal_tools=["get_campaign_metrics", "run_data_quality_check"],
         difficulty="easy",
         queries=[
-            "广告单元 1001 最近24小时整体表现正常吗？帮我做个健康检查，有问题再重点说明",
-            "广告单元 1007 有没有什么指标异常变化？帮我检查一遍数据质量",
-            "AdID 1001 昨天表现有没有异常，帮我体检一下并说明",
+            "Campaign 1001: is the overall performance in the last 24h normal? run a health check "
+            "and highlight anything abnormal",
+            "Campaign 1007: any abnormal metric changes? run a full data-quality pass",
+            "AdID 1001: were there any anomalies yesterday? run a check-up and explain",
         ],
-        note="真实业务case：健康单元（对照组）"),
+        note="healthy control campaign (real incident baseline)"),
     "optimization": dict(
         gt_tags=["optimization"],
-        gt_action_kw=["素材", "A/B", "定向", "出价", "落地页", "重定向", "人群"],
+        gt_action_kw=["creative", "a/b", "targeting", "bid", "landing", "remarketing", "audience"],
         minimal_tools=["get_campaign_metrics", "search_knowledge_base"],
         difficulty="easy",
         queries=[
-            "广告单元 1007 的CTR还能怎么优化？给我可执行建议",
-            "帮我看看1007如何提升点击率，给出优化方案",
-            "1007 效果一般，怎么调优提升转化？",
+            "Campaign 1007: how can we further optimize CTR? give actionable advice",
+            "Help improve 1007's click-through rate; give an optimization plan",
+            "1007 performs mediocre; how should we tune it to lift conversions?",
         ],
-        note="非故障咨询：优化路径"),
+        note="non-incident consulting: optimization path"),
     "not_found": dict(
         gt_tags=["campaign_not_found"],
-        gt_action_kw=["ID", "确认", "核对", "范围", "同步"],
+        gt_action_kw=["verify", "confirm", "adid", "ingestion", "account"],
         minimal_tools=["get_campaign_metrics"],
         difficulty="easy",
         queries=[
-            "广告单元 9999 最近消耗怎么样？帮我分析一下",
-            "帮我查一下AdID: 88888 这个单元今天的数据情况",
+            "Campaign 9999: how is the recent spend? analyze it",
+            "Check today's data for AdID: 88888",
         ],
-        note="边界case：不存在的广告单元"),
+        note="edge case: non-existent campaign"),
 }
 
 
@@ -228,7 +242,7 @@ def _tag_score(pred_tags: list, gt: list):
 def _action_recall(recommendations: list, kw: list) -> float:
     if not kw:
         return 1.0
-    text = "".join(recommendations)
+    text = "".join(recommendations).lower()
     hit = sum(1 for k in kw if k in text)
     return hit / len(kw)
 
@@ -254,10 +268,12 @@ def _llm_judge(cfg: dict, case: EvalCase, report: dict) -> tuple[bool | None, st
         if not llm.available:
             return None, ""
         prompt = (
-            "你是资深广告投放专家。判断 Agent 针对广告单元异常给出的建议是否合理、可执行。\n"
-            f"业务问题：{case.query}\n预期动作关键词(仅供参考): {case.gt_action_kw}\n"
-            f"Agent建议：{report.get('recommendations')}\n"
-            '只输出JSON: {"reasonable": true/false, "comment": "一句话评语"}')
+            "You are a senior ad-delivery expert. Judge whether the Agent's recommendations for the "
+            "campaign anomaly are reasonable and executable.\n"
+            f"Business question: {case.query}\nExpected action keywords (reference only): "
+            f"{case.gt_action_kw}\n"
+            f"Agent recommendations: {report.get('recommendations')}\n"
+            'Output JSON only: {"reasonable": true/false, "comment": "one-line comment in English"}')
         obj = llm.chat_json([{"role": "user", "content": prompt}])
         if obj:
             return bool(obj.get("reasonable")), str(obj.get("comment", ""))
@@ -384,20 +400,20 @@ def _persist(cfg: dict, results: list[CaseResult], summary: dict) -> dict:
 def eval_report_md(summary: dict, payload: list) -> str:
     s = summary
     lines = [
-        "# Agent 评测报告（迭代闭环）",
+        "# Agent Evaluation Report (Iteration Loop)",
         "",
-        f"- 评测时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 评测用例数: {s['total_cases']}",
-        f"- **根因判断准确率**: {s['root_accuracy']:.1%} "
+        f"- Evaluated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- Cases: {s['total_cases']}",
+        f"- **Root-cause accuracy**: {s['root_accuracy']:.1%} "
         f"(macro precision {s['root_precision_macro']:.2f} / recall {s['root_recall_macro']:.2f})",
-        f"- **建议合理性(关键词命中率>=50%)**: {s['action_reasonable_rate']:.1%} "
+        f"- **Actionable recommendations (kw recall >= 50%)**: {s['action_reasonable_rate']:.1%} "
         f"(action recall macro {s['action_recall_macro']:.2f})",
-        f"- **工具路径**: 平均调用 {s['avg_tool_calls']} 次，平均冗余 {s['avg_extra_calls']} 次，"
-        f"必要工具覆盖率 {s['tool_coverage_macro']:.2f}",
-        f"- 失败(bad)case: {s['failed_cases']}",
+        f"- **Tool path**: avg calls {s['avg_tool_calls']}, avg redundant {s['avg_extra_calls']}, "
+        f"minimal-tool coverage {s['tool_coverage_macro']:.2f}",
+        f"- Failed (bad) cases: {s['failed_cases']}",
         "",
-        "## 分难度/分根因准确率",
-        "| 分组 | 用例数 | 正确数 | 准确率 |",
+        "## Accuracy by difficulty / root cause",
+        "| Group | Cases | Correct | Accuracy |",
         "|---|---|---|---|",
     ]
     for grp_name in ("by_difficulty", "by_tag"):
@@ -405,8 +421,8 @@ def eval_report_md(summary: dict, payload: list) -> str:
         for k, v in s[grp_name].items():
             lines.append(f"| {k} | {v['cases']} | {v['correct']} | {v['acc']:.1%} |")
         lines.append("")
-    lines += ["## 逐用例明细", "",
-              "| Case | AdID | 难度 | GT | 预测 | 根因✓ | 建议命中 | 调用/冗余 |",
+    lines += ["## Per-case details", "",
+              "| Case | AdID | Difficulty | GT | Predicted | Root OK | Action recall | Calls/extra |",
               "|---|---|---|---|---|---|---|---|"]
     for p in payload:
         case = p["case"]
@@ -442,12 +458,15 @@ def absorb_bad_cases(cfg: dict | None = None, result: dict | None = None) -> int
         kb.add_doc({
             "doc_id": f"badcase-{case.id}",
             "title": f"[bad-case] {case.query[:40]}",
-            "symptom": f"评测失败case({case.id})，广告单元{case.ad_id}，真实根因{case.gt_tags}",
+            "symptom": f"evaluation failure case {case.id}: campaign {case.ad_id}, "
+                       f"ground-truth root cause {case.gt_tags}",
             "root_cause_tag": (case.gt_tags or ["no_anomaly"])[0],
-            "root_cause": f"Agent 当时给出根因 "
-                          f"{getattr(r, 'report', {}).get('root_cause_tags')}，"
-                          f"建议命中 {getattr(r, 'action_recall', 0):.2f}，需要强化该场景知识",
-            "evidence": f"期望动作关键词：{case.gt_action_kw}；Agent调用{n_calls_of(r)}次工具。",
+            "root_cause": f"Agent concluded "
+                          f"{getattr(r, 'report', {}).get('root_cause_tags')} with action recall "
+                          f"{getattr(r, 'action_recall', 0):.2f}; knowledge for this scenario needs "
+                          f"strengthening",
+            "evidence": f"expected action keywords: {case.gt_action_kw}; Agent made "
+                        f"{n_calls_of(r)} tool call(s).",
             "actions": list(case.gt_action_kw or []),
             "tags": list(case.gt_tags or []),
             "source": "eval-badcase",

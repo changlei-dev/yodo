@@ -21,7 +21,7 @@ import pandas as pd
 from . import config as C
 from . import tools as T
 from . import warehouse as W
-from .knowledge_base import TAG_ZH, get_kb
+from .knowledge_base import TAG_EN, get_kb
 from .llm_client import ChatLLM, extract_json_object
 from .prompts import build_user_message
 
@@ -35,6 +35,8 @@ _ID_EXPLICIT = [
     r"campaign[_\- ]?id[:：]?\s*(\d+)",
     r"广告组\s*[:：#\s]*(\d+)",
     r"单元\s*(\d{4,})",
+    r"\bcampaign\b\s*[:：#]?\s*(\d+)",
+    r"\bunit\b\s*[:：#]?\s*(\d+)",
 ]
 KNOWN: list[int] = []
 
@@ -76,53 +78,54 @@ def _pct_str(v, digits=1) -> str:
 
 def _summarize_metrics(args, r) -> str:
     if not r.get("exists"):
-        return f"广告单元 {r.get('ad_id')} 不存在/无数据"
+        return f"Campaign {r.get('ad_id')} not found / no data"
     p = r["pct_change_24h"]
     cur = r["current_24h"]
     bits = [
-        f"AdID{r['ad_id']} 当前24h: imps={cur['imps']:,} spend_cents={cur['spend_cents']:,} "
+        f"AdID{r['ad_id']} last-24h: imps={cur['imps']:,} spend_cents={cur['spend_cents']:,} "
         f"clks={cur['clks']} convs={cur['convs']} avg_bid={cur['avg_bid']} ctr={cur['ctr']}",
-        f"同比前24h: imps={_pct_str(p.get('imps'))} spend={_pct_str(p.get('spend_cents'))} "
+        f"vs previous 24h: imps={_pct_str(p.get('imps'))} spend={_pct_str(p.get('spend_cents'))} "
         f"clks={_pct_str(p.get('clks'))} convs={_pct_str(p.get('convs'))} "
         f"avg_bid={_pct_str(p.get('avg_bid'))} ctr={_pct_str(p.get('ctr'))}",
     ]
     tail = r["buckets"][-4:]
     if tail:
         last = tail[-1]
-        bits.append(f"最近1小时: imps={last['imps']} spend_cents={last['spend_cents']} "
+        bits.append(f"latest hour: imps={last['imps']} spend_cents={last['spend_cents']} "
                     f"clks={last['clks']} convs={last['convs']}")
-    return "；".join(bits)
+    return "; ".join(bits)
 
 
 def _summarize_dq(args, r) -> str:
     issues = r.get("issues") or []
     if not issues:
-        return f"AdID{args.get('campaign_id')} 数据质量校验通过：主键/价格/时间/统计均无告警"
+        return (f"AdID{args.get('campaign_id')} data-quality checks passed: no warnings on "
+                f"primary-key / price / time / statistics")
     parts = []
     for it in issues:
         parts.append(f"{it['rule_id']}({it['name']})[{it['severity']}] {it['message'][:80]}")
-    return f"AdID{args.get('campaign_id')} 质量告警 {len(issues)} 条：" + " | ".join(parts)
+    return f"AdID{args.get('campaign_id')} quality issues ({len(issues)}): " + " | ".join(parts)
 
 
 def _summarize_events(args, r) -> str:
     if not r.get("exists"):
-        return f"AdID{r.get('campaign_id')} 无原始事件"
+        return f"AdID{r.get('campaign_id')} no raw events"
     c = r.get("counts") or {}
-    return (f"AdID{r['campaign_id']} 事件总量={r['total_events']}, 按类型 counts={c}, "
-            f"无出价父记录={r['events_without_parent_bid']}; 已抽样展示")
+    return (f"AdID{r['campaign_id']} total_events={r['total_events']}, counts by type={c}, "
+            f"events without parent bid={r['events_without_parent_bid']}; sampled rows shown")
 
 
 def _summarize_kb(args, r) -> str:
     hits = r.get("hits") or []
-    parts = [f"检索到 {len(hits)} 条案例"]
+    parts = [f"retrieved {len(hits)} case(s)"]
     for h in hits:
         parts.append(f"[{h['root_cause_tag']}] {h['title']} -> {h['actions'][0] if h.get('actions') else ''}")
-    return "；".join(parts)
+    return "; ".join(parts)
 
 
 def summarize_result(name: str, args: dict, result: dict) -> str:
     if not isinstance(result, dict) or "error" in result:
-        return f"工具错误: {result}"
+        return f"tool error: {result}"
     if name == "get_campaign_metrics":
         return _summarize_metrics(args, result)
     if name == "run_data_quality_check":
@@ -156,7 +159,8 @@ def _local_dip_info(buckets: list) -> tuple[bool, bool, float]:
 def _decide_tag(metrics: dict, dq_report: dict, query: str) -> dict:
     """规则式根因判定。返回 dict(tag, reason, confidence)。"""
     if not metrics.get("exists"):
-        return {"tag": "campaign_not_found", "reason": "该 AdID 仓库中不存在", "confidence": 0.99}
+        return {"tag": "campaign_not_found",
+                "reason": "the AdID does not exist in the data warehouse", "confidence": 0.99}
 
     issues = dq_report.get("issues") or []
     rule_ids = [it["rule_id"] for it in issues]
@@ -178,11 +182,11 @@ def _decide_tag(metrics: dict, dq_report: dict, query: str) -> dict:
 
     # 1) 明确的字段级异常优先（与量级无关）
     if "R2" in rule_ids:
-        return {"tag": "price_anomaly", "reason": "质量校验 R2：PayingPrice>BiddingPrice",
+        return {"tag": "price_anomaly", "reason": "quality check R2: PayingPrice > BiddingPrice",
                 "confidence": 0.97}
     if "R3" in rule_ids:
         return {"tag": "conv_clock_anomaly",
-                "reason": "质量校验 R3：转化/点击时间早于曝光(时间倒挂)",
+                "reason": "quality check R3: conversion/click earlier than impression (time reversal)",
                 "confidence": 0.95}
 
     dip, recovered, dip_depth = _local_dip_info(metrics.get("buckets") or [])
@@ -190,64 +194,77 @@ def _decide_tag(metrics: dict, dq_report: dict, query: str) -> dict:
 
     # 2) 出价下调
     if bid_p is not None and bid_p <= -0.25 and (neg(imp_p, -0.2) or neg(spd_p, -0.2)):
-        return {"tag": "bid_drop", "reason": f"均价下调 {_pct_str(bid_p)}，量级同步收缩",
+        return {"tag": "bid_drop", "reason": f"avg bid down {_pct_str(bid_p)} while volume shrank accordingly",
                 "confidence": 0.93}
 
     # 3) CTR 统计离群：CTR 大幅抬升且曝光未同步大跌(排除断量分母效应)
     if ctr_p is not None and ctr_p >= 0.5 and not severe and not neg(imp_p, -0.3):
         return {"tag": "ctr_stat_outlier",
-                "reason": f"CTR 同比 {_pct_str(ctr_p)} 且曝光稳定，结合点击来源/质量 R4 判断是否存在异常流量",
+                "reason": f"CTR up {_pct_str(ctr_p)} YoW while impressions are stable; cross-check click "
+                          f"sources and quality R4 for suspicious traffic",
                 "confidence": 0.85}
 
     # 4) 持续中断：消耗/曝光双跌 + 出价正常
     if severe and normalish(bid_p):
         if "R1b" in rule_ids or "R1" in rule_ids:
             return {"tag": "delivery_outage",
-                    "reason": f"消耗/曝光大幅下滑(imp {_pct_str(imp_p)}, spend {_pct_str(spd_p)})"
-                              f"但出价正常，且质量校验提示有出价无曝光/孤儿事件，指向投放服务中断(素材/渠道/定向)",
+                    "reason": f"spend/impressions down sharply (imp {_pct_str(imp_p)}, "
+                              f"spend {_pct_str(spd_p)}) while bid is normal, and quality checks flag "
+                              f"bid-without-impression/orphan events: points to a delivery outage "
+                              f"(creative/channel/targeting)",
                     "confidence": 0.9}
         return {"tag": "delivery_outage",
-                "reason": f"消耗/曝光大幅下滑但出价正常，出价后无曝光占比上升，指向投放链路问题",
+                "reason": f"spend/impressions down sharply while bid is normal and bid-without-impression "
+                          f"ratio rises: points to a delivery-pipeline problem",
                 "confidence": 0.85}
 
     # 5) 随机丢包：整体未暴跌但有局部凹陷且已恢复
     if dip and recovered and not severe and dip_depth <= 0.72:
         return {"tag": "imp_dataloss",
-                "reason": f"整体量级未暴跌但小时序列出现凹陷(深度 {dip_depth})后已恢复，"
-                          f"符合上报丢包特征(有出价无曝光、缺口随机、可自愈)",
+                "reason": f"volume did not collapse overall but the hourly series shows a dip "
+                          f"(depth {dip_depth}) that later recovered: typical of report loss "
+                          f"(bid without impression, random gaps, self-healing)",
                 "confidence": 0.85}
 
     # 6) 转化下跌而点击正常
     if neg(conv_p, -0.4) and normalish(clk_p) and not neg(imp_p, -0.4):
         if "R3" in rule_ids:
-            return {"tag": "conv_clock_anomaly", "reason": "转化下滑且质量校验命中时间倒挂", "confidence": 0.9}
+            return {"tag": "conv_clock_anomaly",
+                    "reason": "conversions down and quality check hits time reversal", "confidence": 0.9}
         return {"tag": "attribution_loss",
-                "reason": "点击/曝光正常但转化下滑，需排查归因回传与转化埋点", "confidence": 0.7}
+                "reason": "clicks/impressions normal but conversions down: check attribution callbacks "
+                          "and conversion tracking", "confidence": 0.7}
 
     if neg(spd_p, -0.5) and normalish(bid_p) and not neg(imp_p, -0.3):
         return {"tag": "price_anomaly",
-                "reason": "消耗口径异常(曝光正常但消耗大跌)，排查计费/成交价", "confidence": 0.7}
+                "reason": "spend-accounting anomaly (impressions normal but spend drops): check billing "
+                          "and clearing price", "confidence": 0.7}
 
     # 7) 兜底
     if _looks_optimization(query):
-        return {"tag": "optimization", "reason": "指标健康，属优化类咨询", "confidence": 0.9}
-    return {"tag": "no_anomaly", "reason": "各维度变化在正常波动内，质量校验无告警",
+        return {"tag": "optimization", "reason": "metrics are healthy; this is an optimization inquiry",
+                "confidence": 0.9}
+    return {"tag": "no_anomaly", "reason": "all dimensions fluctuate within normal range and quality "
+                                           "checks report no warning",
             "confidence": 0.88}
 
 
 def _looks_optimization(query: str) -> bool:
     kw = ["优化", "怎么提升", "如何提高", "如何提升", "提高ctr", "提升ctr", "建议怎么",
-          "效果不好怎么办", "怎么优化", "提高转化", "提升转化"]
+          "效果不好怎么办", "怎么优化", "提高转化", "提升转化",
+          "optimize", "optimization", "improve", "boost ctr", "how to increase", "grow",
+          "lift", "tune", "increase"]
     return any(k in query.lower() for k in kw)
 
 
 def _looks_health(query: str) -> bool:
-    return any(k in query for k in ["健康", "是否正常", "检查", "有没有异常", "有没有问题", "体检"])
+    return any(k in query for k in ["健康", "是否正常", "检查", "有没有异常", "有没有问题", "体检",
+                                    "healthy", "health check", "normal", "anomaly check", "any issue"])
 
 
 def _kb_query_for(tag: str, query: str, metrics: dict) -> str:
     cur = metrics.get("current_24h") or {}
-    text = f"{TAG_ZH.get(tag, tag)} {query} imps={cur.get('imps')} spend={cur.get('spend_cents')}"
+    text = f"{TAG_EN.get(tag, tag)} {query} imps={cur.get('imps')} spend={cur.get('spend_cents')}"
     return text[:220]
 
 
@@ -295,7 +312,8 @@ class MockPlanner(Planner):
     def plan(self, state: AgentState) -> dict:
         if not state.campaign_ids:
             return self._final(state, {"tag": "campaign_not_found",
-                                       "reason": "未能从问题中解析出广告单元ID", "confidence": 0.8},
+                                       "reason": "could not parse any campaign ID from the question",
+                                       "confidence": 0.8},
                                dq={}, metrics={})
         cid = state.campaign_ids[0]
         used = {s["tool"] for s in state.transcript}
@@ -327,7 +345,9 @@ class MockPlanner(Planner):
         rules = self._rule_ids(state)
         shape_tags = {"delivery_outage", "imp_dataloss"}
         need_events = ((tag in shape_tags and ("R1" in rules or "R1b" in rules))
-                       or any(k in state.query for k in ["明细", "原始", "日志", "事件", "渠道", "核实"]))
+                       or any(k in state.query.lower() for k in
+                              ["明细", "原始", "日志", "事件", "渠道", "核实",
+                               "details", "raw", "logs", "events", "channel", "verify"]))
         if need_events and "get_campaign_events" not in used:
             return {"action": "tool", "tool": "get_campaign_events",
                     "args": {"campaign_id": cid}}
@@ -412,7 +432,7 @@ def _pick_kb_docs(kb_store, tag: str, top: int = 2) -> list:
     exact = kb_store.search_tag(tag)
     if exact:
         return exact[:top]
-    return kb_store.search(TAG_ZH.get(tag, tag), top_k=top)
+    return kb_store.search(TAG_EN.get(tag, tag), top_k=top)
 
 
 def build_mock_report(query, campaign_ids, decision, metrics, dq, events, kb,
@@ -427,18 +447,20 @@ def build_mock_report(query, campaign_ids, decision, metrics, dq, events, kb,
         return _percent(pct.get(k))
 
     if tag == "campaign_not_found":
-        phenomenon = [f"问题：{query}", f"目标广告单元 {cid} 在数据仓库中不存在或查询窗口无数据"]
+        phenomenon = [f"User question: {query}",
+                      f"Campaign {cid} does not exist in the data warehouse or has no data in the window"]
         causes = [{"tag": tag, "desc": decision["reason"], "probability": "high"}]
-        actions = ["核对广告单元ID是否正确(AdID 为整数)", "确认该单元是否在本账号/本数据源范围内",
-                   "如确实存在，检查接入/同步是否延迟"]
-        confirms = [f"人工在广告平台确认 AdID={cid} 是否有效"]
+        actions = ["Verify the campaign ID is correct (AdID is an integer)",
+                   "Confirm the campaign is within this account / this data source",
+                   "If it does exist, check whether ingestion/sync is delayed"]
+        confirms = [f"Manually confirm in the ad platform whether AdID={cid} is valid"]
         conf = float(decision["confidence"])
     else:
-        tag_zh = TAG_ZH.get(tag, tag)
         if tag == "no_anomaly":
-            actions = ["无需处理，当前指标在正常波动范围内，保持观察",
-                       "对比同主体下其他广告单元/大盘数据，判断是否为行业性波动",
-                       "复核数据口径与质量报告，确认无告警后再下结论"]
+            actions = ["No action needed: metrics are within normal fluctuation; keep watching",
+                       "Compare other campaigns under the same advertiser / market data to tell whether "
+                       "this is an industry-wide swing",
+                       "Re-check data definitions and the quality report before concluding"]
         else:
             # 知识依据：检索命中文档 + 同标签规范文档（保证命中噪声时建议仍完整可执行）
             docs = (kb or {}).get("hits") or []
@@ -453,28 +475,30 @@ def build_mock_report(query, campaign_ids, decision, metrics, dq, events, kb,
                 if d.get("root_cause_tag") == tag:
                     actions.extend(d.get("actions", []))
             if not actions:
-                actions = ["结合指标与质量校验结果复核数据口径", "对比同主体下其他广告单元是否同步波动",
-                           "必要时在广告平台侧进一步核对该单元配置与状态"]
+                actions = ["Re-check the data definitions against metrics and quality findings",
+                           "Compare whether other campaigns under the same advertiser move together",
+                           "Verify the campaign config and status on the ad platform if needed"]
         actions = _dedup(actions)[:5]
 
-        phenomenon = [f"用户问题：{query}"]
+        phenomenon = [f"User question: {query}"]
         if metrics.get("exists"):
             phenomenon.append(
-                f"指标：当前24h imps={cur.get('imps'):,} spend={cur.get('spend_cents'):,} "
-                f"clks={cur.get('clks')} convs={cur.get('convs')} avg_bid={cur.get('avg_bid')}；"
-                f"同比 imps {f('imps')} / spend {f('spend_cents')} / clks {f('clks')} / "
+                f"Metrics: last-24h imps={cur.get('imps'):,} spend={cur.get('spend_cents'):,} "
+                f"clks={cur.get('clks')} convs={cur.get('convs')} avg_bid={cur.get('avg_bid')}; "
+                f"vs previous 24h: imps {f('imps')} / spend {f('spend_cents')} / clks {f('clks')} / "
                 f"convs {f('convs')} / avg_bid {f('avg_bid')}")
         if issues:
-            phenomenon.append(f"数据质量：{dq.get('summary', '')}")
-        phenomenon.append(f"判定：{decision['reason']}（标签 {tag_zh}）")
+            phenomenon.append(f"Data quality: {dq.get('summary', '')}")
+        phenomenon.append(f"Judgment: {decision['reason']}")
 
         causes = [{"tag": tag, "desc": decision["reason"], "probability": "high"}]
-        confirms = ["需结合广告平台/媒体后台人工确认最终根因" if tag == "delivery_outage"
-                    else "关注下个周期指标是否恢复以验证判断"]
+        confirms = ["Final root cause needs manual confirmation on the ad platform / media side"
+                    if tag == "delivery_outage"
+                    else "Verify the judgment by watching whether metrics recover in the next cycle"]
         conf = float(decision["confidence"])
 
     return {
-        "summary": f"广告单元 {cid}：{TAG_ZH.get(tag, tag)} —— {decision['reason'][:80]}",
+        "summary": f"Campaign {cid}: {TAG_EN.get(tag, tag)} - {decision['reason'][:80]}",
         "query": query,
         "ad_id": cid,
         "phenomenon": phenomenon,
@@ -582,7 +606,8 @@ def _mock_final_from_transcript(query: str, cids: list[int], transcript: list,
     metrics = metrics or {}
     dq = dq or {}
     if not metrics.get("exists"):
-        decision = {"tag": "campaign_not_found", "reason": "广告单元在仓库中不存在", "confidence": 0.8}
+        decision = {"tag": "campaign_not_found", "reason": "campaign not found in the warehouse",
+                    "confidence": 0.8}
     else:
         decision = _decide_tag(metrics, dq, query)
     return build_mock_report(query, cids, decision, metrics=metrics, dq=dq,
@@ -691,7 +716,8 @@ def _run_loop(planner: Planner, state: AgentState, max_steps: int) -> dict:
         transcript.append(step)
         tool_calls += 1
     if not report:
-        decision = {"tag": "no_anomaly", "reason": "步数耗尽仍未收敛", "confidence": 0.4}
+        decision = {"tag": "no_anomaly", "reason": "did not converge within the step budget",
+                    "confidence": 0.4}
         m = {}
         for s_ in reversed(transcript):
             if s_["tool"] == "get_campaign_metrics":
@@ -725,35 +751,35 @@ def report_to_markdown(result: DiagnosisResult) -> str:
     r = result.report
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        f"# 广告故障排查报告",
+        f"# Ad Delivery Troubleshooting Report",
         "",
-        f"- 时间: {now}",
-        f"- 查询: {r.get('query', result.query)}",
-        f"- 广告单元: {r.get('ad_id', result.campaign_ids)}",
-        f"- 排查模式: {result.mode}（工具调用 {result.n_tool_calls} 次）",
-        f"- 置信度: {r.get('confidence')}",
-        f"- 结论: {r.get('summary', '')}",
+        f"- Generated at: {now}",
+        f"- Query: {r.get('query', result.query)}",
+        f"- Campaign (AdID): {r.get('ad_id', result.campaign_ids)}",
+        f"- Mode: {result.mode} ({result.n_tool_calls} tool call(s))",
+        f"- Confidence: {r.get('confidence')}",
+        f"- Conclusion: {r.get('summary', '')}",
         "",
-        "## 一、现象",
+        "## 1. Observed Phenomena",
     ]
     for p in r.get("phenomenon") or []:
         lines.append(f"- {p}")
 
-    lines += ["", "## 二、候选根因"]
+    lines += ["", "## 2. Candidate Root Causes"]
     for rc in r.get("root_causes") or []:
         lines.append(f"- **{rc.get('tag')}**({rc.get('probability', '-')}): {rc.get('desc')}")
 
-    lines += ["", "## 三、可执行建议"]
+    lines += ["", "## 3. Actionable Recommendations"]
     for i, a in enumerate(r.get("recommendations") or [], 1):
         lines.append(f"{i}. {a}")
 
-    lines += ["", "## 四、待确认事项"]
+    lines += ["", "## 4. Items to Confirm"]
     for i, c in enumerate(r.get("needs_confirm") or [], 1):
         lines.append(f"{i}. {c}")
 
     if result.transcript:
-        lines += ["", "## 五、排查过程（工具调用轨迹）"]
+        lines += ["", "## 5. Investigation Trace (Tool Calls)"]
         for i, s in enumerate(result.transcript, 1):
-            lines.append(f"{i}. 调用 **{s['tool']}** args={s.get('args')}")
-            lines.append(f"   → {s.get('finding', '')}")
+            lines.append(f"{i}. Called **{s['tool']}** args={s.get('args')}")
+            lines.append(f"   -> {s.get('finding', '')}")
     return "\n".join(lines)
